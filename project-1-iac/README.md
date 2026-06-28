@@ -1,8 +1,6 @@
 # Project 1 — Infrastructure as Code
 
-> **Portfolio context:** Part of a six-project AWS DevSecOps portfolio targeting remote USD/EUR/GBP roles. Every subsequent project runs on this infrastructure.
-
-A production-shaped, modular Terraform codebase that builds a complete AWS environment from scratch and tears it down cleanly, demonstrating AWS depth (VPC internals, IAM least-privilege, RDS hardening) alongside IaC discipline (remote state, module composition, sensible defaults for dev vs prod).
+A production-shaped, modular Terraform codebase that builds a complete AWS environment from scratch and tears it down cleanly, demonstrating AWS depth (VPC internals, IAM least-privilege, RDS hardening) alongside IaC discipline (remote state, module composition, sensible defaults for dev vs prod). Every subsequent project runs on this infrastructure.
 
 ---
 
