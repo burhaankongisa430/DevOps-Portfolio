@@ -1,6 +1,7 @@
 # AWS DevSecOps Portfolio
 
-A portfolio of six connected AWS DevSecOps projects that together form a production-grade platform: Terraform infrastructure, containerised workloads on EKS, GitOps progressive delivery, a secure CI/CD pipeline, full-stack observability, and a developer-facing CLI that ties it all together.
+A portfolio of six connected AWS DevSecOps projects that together form a production-grade platform: 
+Terraform infrastructure, containerised workloads on EKS, GitOps progressive delivery, a secure CI/CD pipeline, full-stack observability, and a developer-facing CLI that ties it all together.
 
 Each project is a genuine layer that the next one runs on top of, they are not six independent tutorials. Project 2's application runs in the VPC from Project 1. Project 3's ArgoCD deploys to Project 2's cluster. Project 4's pipeline scans Project 1's Terraform, builds Project 2's container, and ships it through Project 3's GitOps. Project 5 monitors everything and upgrades Project 3's canary analysis. Project 6 wraps all five layers behind a single CLI so a developer can provision an environment and deploy a new service in five commands.
 
