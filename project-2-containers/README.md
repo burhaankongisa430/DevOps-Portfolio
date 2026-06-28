@@ -1,7 +1,5 @@
 # Project 2 — Containers & Orchestration
 
-> **Portfolio context:**
-
 A production-shaped container setup: a Go HTTP service compiled into a distroless image, an EKS managed cluster built on Project 1's VPC, and a Helm chart that handles rolling deploys, autoscaling, and least-privilege pod IAM.
 
 ---
