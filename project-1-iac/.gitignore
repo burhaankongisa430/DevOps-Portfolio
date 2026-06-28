@@ -1,0 +1,30 @@
+# Terraform working directories
+.terraform/
+.terraform.lock.hcl
+
+# Saved plan files
+*.tfplan
+tfplan
+
+# State files — never commit state; it lives in S3
+*.tfstate
+*.tfstate.backup
+.terraform.tfstate
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Override files — local developer overrides should not be shared
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Sensitive variable files — use TF_VAR_* env vars instead
+*.auto.tfvars
+secrets.tfvars
+
+# OS noise
+.DS_Store
+Thumbs.db

@@ -1,0 +1,25 @@
+# Dev-environment overrides.
+# Usage: helm upgrade --install app ./helm/app -f helm/app/values-dev.yaml \
+#          --set image.repository=<ECR_URL> --set image.tag=<GIT_SHA>
+
+replicaCount: 2
+
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+  hosts:
+    - host: ""    # left blank — ALB assigns its own DNS name
+      paths:
+        - path: /
+          pathType: Prefix
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 60

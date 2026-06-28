@@ -1,0 +1,21 @@
+# Canary service: receives canaryWeight% of ALB traffic during a rollout.
+# Argo Rollouts adds a pod-template-hash selector here so only canary pods
+# (running the new image version) receive traffic through this service.
+# When the rollout completes or aborts, this service selects no pods.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "app.fullname" . }}-canary
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: canary
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "app.selectorLabels" . | nindent 4 }}

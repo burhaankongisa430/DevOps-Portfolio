@@ -1,0 +1,9 @@
+.terraform/
+.terraform.lock.hcl
+*.tfplan
+*.tfstate
+*.tfstate.backup
+*.auto.tfvars
+infra/modules/auto-remediation/lambda/remediate.zip
+.DS_Store
+Thumbs.db

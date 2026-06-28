@@ -1,0 +1,8 @@
+apiVersion: v2
+name: app
+description: DevOps portfolio application — Go HTTP service with PostgreSQL health check
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Burhaan Kongisa

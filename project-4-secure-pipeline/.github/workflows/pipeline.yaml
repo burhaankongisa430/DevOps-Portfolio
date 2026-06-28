@@ -1,0 +1,339 @@
+name: Secure CI/CD Pipeline
+
+# Triggers: every push to main and every PR targeting main.
+# The deploy job is gated to main-branch pushes only.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".trivyignore"
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Default to read-only. Each job declares only the permissions it actually needs.
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  IMAGE_NAME: devops-portfolio/dev/app   # ECR repository path (no registry prefix)
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Job 1 — Secrets Scan (gitleaks)
+# Must pass before any build or push step. Scanning the full git history (fetch-
+# depth: 0) catches secrets that were committed and later removed — they're still
+# in the history and still exploitable.
+# ════════════════════════════════════════════════════════════════════════════════
+jobs:
+  secrets-scan:
+    name: "Secrets Scan · gitleaks"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so gitleaks can scan all commits
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          config: project-4-secure-pipeline/.gitleaks.toml
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Job 2 — SAST + Dependency Scan
+# Static analysis of the application source code (semgrep) and a scan for known
+# vulnerabilities in Go module dependencies (govulncheck). Both upload SARIF to
+# the GitHub Security tab so findings are visible without leaving the repo.
+# ════════════════════════════════════════════════════════════════════════════════
+  sast:
+    name: "SAST · semgrep + govulncheck"
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # upload SARIF to GitHub Security tab
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+          cache-dependency-path: project-2-containers/app/go.sum
+
+      - name: govulncheck — Go dependency vulnerability scan
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.21"
+          go-package: ./...
+          work-dir: project-2-containers/app
+
+      - name: Semgrep — SAST with Go + secrets + OWASP rules
+        run: |
+          pip install --quiet semgrep
+          semgrep \
+            --config=p/golang \
+            --config=p/secrets \
+            --config=p/owasp-top-ten \
+            --sarif \
+            --output=semgrep-results.sarif \
+            --metrics=off \
+            project-2-containers/app/
+        continue-on-error: false
+
+      - name: Upload Semgrep SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep-results.sarif
+          category: semgrep
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Job 3 — IaC Security Scan (runs in parallel with SAST)
+# Checkov and tfsec scan the Project 1 Terraform modules for misconfigurations
+# before any infrastructure apply. This closes the loop: the pipeline that
+# deploys the app also validates the infrastructure the app runs on.
+# ════════════════════════════════════════════════════════════════════════════════
+  iac-scan:
+    name: "IaC Scan · Checkov + tfsec"
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkov — Terraform misconfiguration scan
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: project-1-iac
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,checkov-results.sarif
+          soft_fail: false
+          # Skip checks that are intentionally not met in this portfolio setup
+          # (document each skip so reviewers understand the decision):
+          # CKV_AWS_117: Lambda inside VPC — not applicable, no Lambda here
+          # CKV_AWS_158: CloudWatch encryption — dev environment trade-off
+          skip_check: "CKV_AWS_117,CKV_AWS_158"
+
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov
+
+      - name: tfsec — additional Terraform security rules
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: project-1-iac
+          format: sarif
+          sarif_file: tfsec-results.sarif
+          soft_fail: false
+
+      - name: Upload tfsec SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: project-1-iac/tfsec-results.sarif
+          category: tfsec
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Job 4 — Build → Scan → Policy check → Sign → Push
+# Image is built locally first, scanned by Trivy, and evaluated by Conftest
+# BEFORE being pushed to ECR. This is the key supply-chain property: nothing
+# that fails a security gate reaches the registry.
+# ════════════════════════════════════════════════════════════════════════════════
+  build-scan-sign:
+    name: "Build · Trivy · Conftest · cosign"
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, sast]
+    permissions:
+      id-token: write        # required for AWS OIDC auth AND cosign keyless signing
+      contents: read
+      security-events: write
+    outputs:
+      image_uri: ${{ steps.tag.outputs.image_uri }}
+      image_tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── AWS auth via OIDC — no long-lived keys stored anywhere ───────────────
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Compute image tag (sha-<8-char-git-sha>)
+        id: tag
+        run: |
+          TAG="sha-${GITHUB_SHA::8}"
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          IMAGE_URI="${REGISTRY}/${{ env.IMAGE_NAME }}:${TAG}"
+          echo "tag=${TAG}"           >> "$GITHUB_OUTPUT"
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+          echo "registry=${REGISTRY}"  >> "$GITHUB_OUTPUT"
+
+      # ── Build locally (do NOT push yet — scan before publish) ────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (local daemon, not pushed)
+        run: |
+          docker build \
+            --build-arg VERSION="${{ steps.tag.outputs.tag }}" \
+            --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --tag "${{ steps.tag.outputs.image_uri }}" \
+            project-2-containers/app
+
+      # ── Security gate 1: Trivy container scan ────────────────────────────────
+      # Fail on unfixed CRITICAL/HIGH CVEs. Unfixed CVEs are excluded from the
+      # count because there's no actionable remediation — they show up in the
+      # SARIF for visibility but don't block the build.
+      - name: "Security gate: Trivy image scan"
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.tag.outputs.image_uri }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: project-4-secure-pipeline/.trivyignore
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+
+      # ── Security gate 2: OPA/Conftest policy check ───────────────────────────
+      # Render the Helm chart to Kubernetes manifests and evaluate every resource
+      # against the Rego policies in policy/conftest/. Any `deny` rule that fires
+      # fails the build before the image reaches the registry.
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.14.4"
+
+      - name: Install Conftest
+        run: |
+          CONFTEST_VERSION="0.50.0"
+          wget -q "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf "conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" conftest
+          sudo mv conftest /usr/local/bin/conftest
+
+      - name: "Security gate: OPA/Conftest policy check"
+        run: |
+          # Render Helm templates with the actual image URI that will be deployed
+          helm template portfolio-app project-3-gitops/helm/app \
+            -f project-3-gitops/helm/app/values.yaml \
+            -f project-3-gitops/helm/app/values-dev.yaml \
+            --set "image.repository=${{ steps.tag.outputs.registry }}/${{ env.IMAGE_NAME }}" \
+            --set "image.tag=${{ steps.tag.outputs.tag }}" \
+            > /tmp/k8s-manifests.yaml
+
+          echo "--- Rendered manifests (first 40 lines) ---"
+          head -40 /tmp/k8s-manifests.yaml
+
+          # Evaluate each resource against all Rego policies in policy/conftest/
+          conftest test /tmp/k8s-manifests.yaml \
+            --policy project-4-secure-pipeline/policy/conftest \
+            --namespace main \
+            --output table
+
+      # ── Push to ECR (only after all security gates pass) ─────────────────────
+      - name: Push image to ECR
+        run: |
+          docker push "${{ steps.tag.outputs.image_uri }}"
+          # Also update the :latest tag (used by the weekly scheduled rescan)
+          docker tag "${{ steps.tag.outputs.image_uri }}" \
+            "${{ steps.tag.outputs.registry }}/${{ env.IMAGE_NAME }}:latest"
+          docker push "${{ steps.tag.outputs.registry }}/${{ env.IMAGE_NAME }}:latest"
+
+      # ── Sign with cosign (keyless — no private key anywhere) ─────────────────
+      # Cosign exchanges the GitHub Actions OIDC token for a short-lived Fulcio
+      # certificate and records the signature in Sigstore's Rekor transparency
+      # log. Anyone can verify: cosign verify --certificate-identity-regexp=...
+      # --certificate-oidc-issuer=https://token.actions.githubusercontent.com IMAGE
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image with cosign (keyless)
+        run: |
+          cosign sign --yes "${{ steps.tag.outputs.image_uri }}"
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Job 5 — GitOps update (main branch only)
+# Updates image.tag in the ArgoCD Application manifest and pushes the commit.
+# ArgoCD detects the change within 30s and triggers the Argo Rollouts canary
+# defined in Project 3. The pipeline never calls kubectl or helm directly.
+# ════════════════════════════════════════════════════════════════════════════════
+  deploy:
+    name: "GitOps Update · ArgoCD canary trigger"
+    runs-on: ubuntu-latest
+    needs: [build-scan-sign, iac-scan]
+    # Deploy only on direct pushes to main — not on PRs and not on other branches
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: write   # push the image-tag commit back to the repo
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Use the default GITHUB_TOKEN — the pipeline commits back to the same repo
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update image tag in ArgoCD Application manifest
+        run: |
+          TAG="${{ needs.build-scan-sign.outputs.image_tag }}"
+
+          # yq is pre-installed on ubuntu-latest
+          # Update the image.tag parameter value in the ArgoCD Application spec
+          yq -i '
+            (.spec.source.helm.parameters[] | select(.name == "image.tag")).value = "'${TAG}'"
+          ' project-3-gitops/argocd/apps/portfolio-app.yaml
+
+          git add project-3-gitops/argocd/apps/portfolio-app.yaml
+          git diff --cached --stat
+
+      - name: Push GitOps commit
+        run: |
+          TAG="${{ needs.build-scan-sign.outputs.image_tag }}"
+          git commit -m "ci: deploy ${TAG} [skip ci]"
+          git push
+
+      - name: Print deploy summary
+        run: |
+          TAG="${{ needs.build-scan-sign.outputs.image_tag }}"
+          IMAGE_URI="${{ needs.build-scan-sign.outputs.image_uri }}"
+          echo ""
+          echo "Deploy triggered:"
+          echo "  Image  : ${IMAGE_URI}"
+          echo "  Tag    : ${TAG}"
+          echo "  ArgoCD : update committed and pushed — canary will start within 30s"
+          echo ""
+          echo "To watch the canary:"
+          echo "  kubectl argo rollouts get rollout app -n default --watch"
+          echo ""
+          echo "To verify the cosign signature:"
+          echo "  cosign verify \\"
+          echo "    --certificate-identity-regexp='https://github.com/.*/pipeline.yaml.*' \\"
+          echo "    --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \\"
+          echo "    ${IMAGE_URI}"

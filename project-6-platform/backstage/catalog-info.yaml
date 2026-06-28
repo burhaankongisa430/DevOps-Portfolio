@@ -1,0 +1,192 @@
+# Backstage catalog entries for the DevOps portfolio.
+#
+# Register these by pointing a Backstage instance at this file via a Location:
+#   kubectl apply -f - <<EOF
+#   apiVersion: backstage.io/v1alpha1
+#   kind: Location
+#   metadata:
+#     name: devops-portfolio
+#   spec:
+#     type: url
+#     target: https://github.com/GITHUB_USERNAME/devops-portfolio/blob/main/project-6-platform/backstage/catalog-info.yaml
+#   EOF
+#
+# The entity hierarchy:
+#   System: devops-portfolio (the whole platform)
+#     ├── Component: portfolio-app (the Go HTTP service)
+#     ├── Resource: devops-portfolio-vpc
+#     ├── Resource: devops-portfolio-eks
+#     └── Resource: devops-portfolio-rds
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: devops-portfolio
+  description: >
+    End-to-end AWS DevSecOps platform: IaC (Terraform), containers (EKS), GitOps
+    (ArgoCD + Argo Rollouts), secure CI/CD (GitHub Actions), and observability
+    (Prometheus + GuardDuty). Built as a portfolio demonstrating production-grade
+    DevSecOps on AWS.
+  tags:
+    - aws
+    - kubernetes
+    - devops
+    - devsecops
+  annotations:
+    github.com/project-slug: "GITHUB_USERNAME/devops-portfolio"
+    backstage.io/techdocs-ref: dir:.
+  links:
+    - title: GitHub Repository
+      url: https://github.com/GITHUB_USERNAME/devops-portfolio
+    - title: ArgoCD
+      url: http://localhost:8080
+      icon: dashboard
+    - title: Grafana
+      url: http://localhost:3000
+      icon: dashboard
+spec:
+  owner: user:burhaan
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: portfolio-app
+  description: Go HTTP service — health check + info endpoint with Prometheus metrics
+  tags:
+    - go
+    - kubernetes
+    - argo-rollouts
+    - prometheus
+  annotations:
+    github.com/project-slug: "GITHUB_USERNAME/devops-portfolio"
+    backstage.io/techdocs-ref: dir:../../project-2-containers
+    # Links to the CI/CD pipeline for this component
+    github.com/workflows: "pipeline.yaml"
+  links:
+    - title: Source Code
+      url: https://github.com/GITHUB_USERNAME/devops-portfolio/tree/main/project-2-containers/app
+    - title: Helm Chart
+      url: https://github.com/GITHUB_USERNAME/devops-portfolio/tree/main/project-3-gitops/helm/app
+    - title: ArgoCD Application
+      url: https://github.com/GITHUB_USERNAME/devops-portfolio/blob/main/project-3-gitops/argocd/apps/portfolio-app.yaml
+spec:
+  type: service
+  lifecycle: production
+  owner: user:burhaan
+  system: devops-portfolio
+  providesApis:
+    - portfolio-app-api
+  dependsOn:
+    - resource:devops-portfolio-rds
+    - resource:devops-portfolio-eks
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: API
+metadata:
+  name: portfolio-app-api
+  description: Portfolio app HTTP API
+spec:
+  type: openapi
+  lifecycle: production
+  owner: user:burhaan
+  system: devops-portfolio
+  # Inline OpenAPI spec — in production this would reference an external file
+  definition: |
+    openapi: "3.0.0"
+    info:
+      title: Portfolio App API
+      version: "1.0.0"
+    paths:
+      /health:
+        get:
+          summary: Health check
+          responses:
+            "200":
+              description: Healthy
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      status: { type: string }
+                      version: { type: string }
+            "503":
+              description: Degraded (DB unreachable)
+      /:
+        get:
+          summary: Service info
+          responses:
+            "200":
+              description: OK
+      /metrics:
+        get:
+          summary: Prometheus metrics scrape endpoint
+          responses:
+            "200":
+              description: Prometheus text format
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: devops-portfolio-vpc
+  description: AWS VPC — 3-tier subnets across 3 AZs (Project 1)
+  tags: [aws, networking, terraform]
+spec:
+  type: cloud-infrastructure
+  owner: user:burhaan
+  system: devops-portfolio
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: devops-portfolio-eks
+  description: Amazon EKS managed cluster — runs the portfolio workload (Project 2)
+  tags: [aws, kubernetes, terraform]
+spec:
+  type: cloud-infrastructure
+  owner: user:burhaan
+  system: devops-portfolio
+  dependsOn:
+    - resource:devops-portfolio-vpc
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Resource
+metadata:
+  name: devops-portfolio-rds
+  description: Amazon RDS PostgreSQL 15 — app database (Project 1)
+  tags: [aws, postgresql, terraform]
+spec:
+  type: database
+  owner: user:burhaan
+  system: devops-portfolio
+  dependsOn:
+    - resource:devops-portfolio-vpc
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: User
+metadata:
+  name: burhaan
+  description: Burhaan Kongisa — platform engineer
+spec:
+  profile:
+    displayName: Burhaan Kongisa
+    email: burhaankongisa@gmail.com
+  memberOf: [platform-team]
+
+---
+apiVersion: backstage.io/v1alpha1
+kind: Group
+metadata:
+  name: platform-team
+  description: Platform engineering team
+spec:
+  type: team
+  children: []
+  members: [burhaan]

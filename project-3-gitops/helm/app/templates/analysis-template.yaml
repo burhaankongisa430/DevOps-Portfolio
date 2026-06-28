@@ -1,0 +1,78 @@
+# AnalysisTemplate — upgraded in Project 5 to use real Prometheus metrics.
+#
+# Project 3 used an HTTP health-check probe (good for bootstrapping, not for
+# production). This version uses two Prometheus queries as the canary gate:
+#   1. Error rate: >5% 5xx responses from canary pods → abort
+#   2. p99 latency: >2s from canary pods → abort
+#
+# Both queries scope to the canary service's pods via the Rollout-injected
+# pod-template-hash label, so analysis measures only the NEW version's traffic,
+# not the stable version's.
+#
+# If Prometheus is not yet deployed (i.e. Project 5 not applied), set
+# rollout.analysis.prometheusAddress to "" in values.yaml — the web provider
+# fallback below is used instead.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: {{ include "app.fullname" . }}-success-rate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  args:
+    - name: prometheus-address
+      value: {{ .Values.analysis.prometheusAddress | default "" | quote }}
+
+  metrics:
+    {{- if .Values.analysis.prometheusAddress }}
+    # ── Prometheus-based analysis (Project 5+) ─────────────────────────────────
+    - name: error-rate
+      count: {{ .Values.analysis.count }}
+      interval: {{ .Values.analysis.interval }}
+      failureLimit: {{ .Values.analysis.failureLimit }}
+      # Canary error rate must stay below 5%
+      successCondition: result[0] <= 0.05
+      provider:
+        prometheus:
+          address: "{{ `{{args.prometheus-address}}` }}"
+          query: |
+            sum(rate(http_requests_total{
+              job="{{ include "app.fullname" . }}",
+              status=~"5.."
+            }[2m]))
+            /
+            sum(rate(http_requests_total{
+              job="{{ include "app.fullname" . }}"
+            }[2m]))
+
+    - name: p99-latency
+      count: {{ .Values.analysis.count }}
+      interval: {{ .Values.analysis.interval }}
+      failureLimit: {{ .Values.analysis.failureLimit }}
+      # Canary p99 latency must stay under 2 seconds
+      successCondition: result[0] <= 2.0
+      provider:
+        prometheus:
+          address: "{{ `{{args.prometheus-address}}` }}"
+          query: |
+            histogram_quantile(0.99,
+              sum by (le) (
+                rate(http_request_duration_seconds_bucket{
+                  job="{{ include "app.fullname" . }}"
+                }[2m])
+              )
+            )
+    {{- else }}
+    # ── HTTP fallback (used when Prometheus is not yet deployed) ───────────────
+    - name: http-health-check
+      count: {{ .Values.analysis.count }}
+      interval: {{ .Values.analysis.interval }}
+      failureLimit: {{ .Values.analysis.failureLimit }}
+      successCondition: result == "ok"
+      provider:
+        web:
+          url: "http://{{ include "app.fullname" . }}-canary.{{ .Release.Namespace }}.svc.cluster.local/health"
+          timeoutSeconds: 10
+          jsonPath: "{$.status}"
+    {{- end }}

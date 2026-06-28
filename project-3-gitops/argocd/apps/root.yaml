@@ -1,0 +1,34 @@
+# Root Application — the "App of Apps" pattern.
+#
+# This single Application watches the argocd/apps/ directory in Git.
+# Every YAML file dropped into that directory becomes a managed Application
+# automatically. This is how you scale GitOps to dozens of services without
+# manually running `kubectl apply` for each one.
+#
+# Bootstrap: apply this once, then let ArgoCD manage everything else.
+#   kubectl apply -f argocd/apps/root.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  # Finalizer ensures child Applications are deleted when this root is deleted,
+  # preventing orphaned resources in the cluster.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: portfolio
+  source:
+    # REPLACE with your actual GitHub repo URL after pushing this project.
+    repoURL: https://github.com/GITHUB_USERNAME/devops-portfolio.git
+    targetRevision: HEAD
+    path: project-3-gitops/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true      # delete Applications removed from Git
+      selfHeal: true   # re-sync if someone applies manually out-of-band
+    syncOptions:
+      - CreateNamespace=true

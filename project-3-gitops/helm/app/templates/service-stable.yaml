@@ -1,0 +1,20 @@
+# Stable service: receives 100% of traffic when no rollout is in progress.
+# During a canary, Argo Rollouts adjusts the ALB Ingress annotation weights
+# so this service only carries (100 - canaryWeight)% of traffic.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "app.fullname" . }}-stable
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: stable
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "app.selectorLabels" . | nindent 4 }}

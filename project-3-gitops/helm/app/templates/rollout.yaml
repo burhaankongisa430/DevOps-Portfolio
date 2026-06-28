@@ -1,0 +1,79 @@
+# Rollout replaces the standard Kubernetes Deployment.
+# The Rollout controller (Argo Rollouts) manages the canary progression
+# described in spec.strategy.canary — the standard ReplicaSet controller
+# is bypassed entirely.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "app.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.rollout.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "app.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "app.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "app.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "app.selectorLabels" . | nindent 14 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "app.fullname" . }}-config
+          {{- if .Values.dbSecretName }}
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.dbSecretName }}
+                  key: host
+          {{- end }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+  strategy:
+    canary:
+      # canaryService receives traffic during the canary phase.
+      # stableService receives all traffic when no rollout is in progress.
+      # Argo Rollouts manages which pods each service selects by injecting
+      # a pod-template-hash label — no manual label management needed.
+      canaryService: {{ include "app.fullname" . }}-canary
+      stableService: {{ include "app.fullname" . }}-stable
+      trafficRouting:
+        # ALB traffic splitting: Argo Rollouts dynamically updates the Ingress
+        # annotation alb.ingress.kubernetes.io/actions.<stable-svc> to set the
+        # traffic weight split between stable and canary target groups.
+        alb:
+          ingress: {{ include "app.fullname" . }}
+          servicePort: 80
+      steps:
+        {{- toYaml .Values.rollout.canary.steps | nindent 8 }}

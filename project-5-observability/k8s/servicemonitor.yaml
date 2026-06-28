@@ -1,0 +1,28 @@
+# ServiceMonitor tells the Prometheus Operator to scrape the portfolio app.
+# Apply after the app is deployed and Prometheus is running:
+#   kubectl apply -f k8s/servicemonitor.yaml
+#
+# The Prometheus Operator watches for ServiceMonitor resources and automatically
+# updates Prometheus's scrape configuration — no manual config reload needed.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: portfolio-app
+  namespace: monitoring
+  labels:
+    # Must match the serviceMonitorSelector in kube-prometheus-stack values.
+    # Since we set serviceMonitorSelectorNilUsesHelmValues: false, all
+    # ServiceMonitors across all namespaces are picked up automatically.
+    app: portfolio-app
+spec:
+  namespaceSelector:
+    matchNames:
+      - default
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 10s

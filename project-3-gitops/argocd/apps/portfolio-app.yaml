@@ -1,0 +1,58 @@
+# Application: deploys the portfolio service via the Helm chart in project-3-gitops/helm/app/.
+#
+# ArgoCD watches this file in Git. When image.tag changes here, ArgoCD syncs
+# the Helm release, which triggers the Argo Rollout canary strategy.
+# The only way to deploy is to update this file and push — no one runs helm install manually.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: portfolio-app
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # Tells ArgoCD how to handle the Rollout CRD health — maps to the custom
+    # health check configured in argocd-cm (set in Terraform values).
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: portfolio
+  source:
+    # REPLACE with your actual GitHub repo URL.
+    repoURL: https://github.com/GITHUB_USERNAME/devops-portfolio.git
+    targetRevision: HEAD
+    path: project-3-gitops/helm/app
+    helm:
+      valueFiles:
+        - values.yaml
+        - values-dev.yaml
+      parameters:
+        # REPLACE with your ECR URL (from `terraform output ecr_repository_url` in P2).
+        - name: image.repository
+          value: "ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/devops-portfolio/dev/app"
+        # UPDATE this value to trigger a canary deploy — bump the tag, push, done.
+        - name: image.tag
+          value: "latest"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - PruneLast=true    # delete old resources after new ones are healthy
+      - RespectIgnoreDifferences=true
+    retry:
+      limit: 3
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    # Argo Rollouts dynamically modifies the ALB Ingress annotation weights during
+    # a canary — ArgoCD must not try to revert those in-flight changes.
+    - group: networking.k8s.io
+      kind: Ingress
+      jsonPointers:
+        - /metadata/annotations/alb.ingress.kubernetes.io~1actions.app-stable

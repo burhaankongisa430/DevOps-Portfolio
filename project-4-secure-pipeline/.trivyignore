@@ -1,0 +1,15 @@
+# Trivy CVE exception list.
+# Format: CVE-ID  [expiry date]
+#
+# Each entry MUST have an inline comment documenting:
+#   1. Why this CVE does not apply to this image/workload
+#   2. An expiry date — force yourself to re-evaluate when the date passes
+#
+# Empty files are fine — it means all unfixed CVEs in the image are genuinely
+# blocking and must be resolved or the pipeline fails.
+#
+# Example (commented out — uncomment and justify only if a real exception is needed):
+#
+# CVE-2023-XXXXX  exp:2024-06-01
+# Reason: affects the bash shell; our distroless image has no shell,
+#         so this CVE cannot be exploited in our environment.

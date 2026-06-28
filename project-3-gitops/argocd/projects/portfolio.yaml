@@ -1,0 +1,25 @@
+# AppProject: scopes RBAC for the portfolio namespace.
+# Apply manually after ArgoCD is running:
+#   kubectl apply -f argocd/projects/portfolio.yaml
+#
+# This resource is also managed by Terraform (infra/environments/dev/main.tf)
+# — keep the two in sync. The Terraform version is authoritative; this file
+# serves as documentation and for manual bootstrap if needed.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: portfolio
+  namespace: argocd
+spec:
+  description: DevOps portfolio — all six projects
+  sourceRepos:
+    - "*"
+  destinations:
+    - namespace: "*"
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

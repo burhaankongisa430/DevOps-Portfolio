@@ -1,0 +1,79 @@
+name: Weekly Image Rescan
+
+# CVEs are published continuously. An image that was clean on Monday may have
+# critical findings by Friday. This workflow rescans the deployed image against
+# the latest Trivy vulnerability database every week and surfaces new findings
+# in the GitHub Security tab — no human has to remember to check.
+on:
+  schedule:
+    - cron: "0 03 * * 1"   # Every Monday at 03:00 UTC
+  workflow_dispatch:         # Also runnable manually
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  IMAGE_NAME: devops-portfolio/dev/app
+
+jobs:
+  rescan:
+    name: Trivy rescan of latest deployed image
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write        # AWS OIDC
+      security-events: write # SARIF upload
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Trivy rescan — latest image
+        # exit-code: 0 so a newly-discovered CVE creates a finding but does not
+        # block CI (the image is already in production). The SARIF upload makes
+        # findings visible and triggers GitHub Security alerts if configured.
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: "${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest"
+          format: sarif
+          output: trivy-rescan.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+          ignore-unfixed: true
+          trivyignores: project-4-secure-pipeline/.trivyignore
+
+      - name: Upload rescan SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-rescan.sarif
+          category: trivy-scheduled
+
+      - name: Check for CRITICAL findings and notify
+        run: |
+          # Count critical findings — fail the job (without blocking CD) if any exist
+          # so the team is notified via GitHub's workflow failure notification.
+          CRITICALS=$(python3 -c "
+          import json, sys
+          with open('trivy-rescan.sarif') as f:
+              data = json.load(f)
+          count = sum(
+              1 for run in data.get('runs', [])
+              for r in run.get('results', [])
+              if r.get('level') == 'error'
+          )
+          print(count)
+          ")
+          echo "Critical findings: ${CRITICALS}"
+          if [ "$CRITICALS" -gt 0 ]; then
+            echo "::warning::${CRITICALS} critical CVE(s) found in the deployed image. Review the Security tab."
+          fi

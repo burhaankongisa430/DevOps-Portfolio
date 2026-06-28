@@ -1,0 +1,120 @@
+# PrometheusRule defines alerting rules evaluated by the Prometheus Operator.
+# These are the meaningful alerts — they fire on conditions that require human
+# attention, not on noise. Every rule has a clear `summary` (what happened)
+# and `description` (specific values so the on-call doesn't need to query).
+#
+# Apply: kubectl apply -f k8s/alerts/prometheusrule.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: portfolio-app
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack   # must match Prometheus operator's ruleSelector
+spec:
+  groups:
+    - name: portfolio-app.availability
+      interval: 30s
+      rules:
+
+        # Fires if more than 5% of requests return 5xx over a 5-minute window.
+        # Threshold is deliberately conservative — 5% on a small app is significant.
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{job="portfolio-app", status=~"5.."}[5m]))
+              /
+              sum(rate(http_requests_total{job="portfolio-app"}[5m]))
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Portfolio app error rate is {{ $value | humanizePercentage }}"
+            description: >
+              More than 5% of requests to the portfolio app are returning 5xx errors.
+              Current rate: {{ $value | humanizePercentage }}.
+              Check recent deployments and application logs.
+            runbook: "https://github.com/GITHUB_USERNAME/devops-portfolio/blob/main/project-3-gitops/docs/runbook-rollback.md"
+
+        # p99 latency above 2 seconds for 5 consecutive minutes.
+        - alert: HighP99Latency
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (
+                rate(http_request_duration_seconds_bucket{job="portfolio-app"}[5m])
+              )
+            ) > 2.0
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Portfolio app p99 latency is {{ $value | humanizeDuration }}"
+            description: >
+              The 99th percentile request latency has exceeded 2 seconds for 5 minutes.
+              Current p99: {{ $value | humanizeDuration }}.
+              Investigate slow DB queries or resource contention.
+
+        # Any pod in the portfolio app namespace restarting more than once in 15 minutes.
+        - alert: PodCrashLooping
+          expr: |
+            rate(
+              kube_pod_container_status_restarts_total{
+                namespace="default",
+                pod=~".*-app-.*"
+              }[15m]
+            ) > 0
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+          annotations:
+            summary: "Pod {{ $labels.pod }} is crash looping"
+            description: >
+              Pod {{ $labels.pod }} container {{ $labels.container }} has restarted
+              {{ $value | humanize }} times in the last 15 minutes.
+              Check: kubectl logs {{ $labels.pod }} --previous -n {{ $labels.namespace }}
+
+        # Container was OOM-killed — memory limit is too low or there's a leak.
+        - alert: ContainerOOMKilled
+          expr: |
+            kube_pod_container_status_last_terminated_reason{
+              namespace="default",
+              reason="OOMKilled",
+              pod=~".*-app-.*"
+            } == 1
+          for: 0m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Container {{ $labels.container }} was OOM killed"
+            description: >
+              Container {{ $labels.container }} in pod {{ $labels.pod }} was killed
+              by the OOM killer. Either the memory limit is too low or the application
+              has a memory leak. Current limit: check resources.limits.memory in the Rollout.
+
+    - name: portfolio-app.slo
+      interval: 60s
+      rules:
+
+        # Records a 1-minute availability ratio for SLO tracking.
+        # 1.0 = 100% available, 0.0 = 0% available.
+        - record: job:portfolio_app_availability:ratio1m
+          expr: |
+            1 - (
+              sum(rate(http_requests_total{job="portfolio-app", status=~"5.."}[1m]))
+              /
+              sum(rate(http_requests_total{job="portfolio-app"}[1m]))
+            )
+
+        # 28-day availability — compare against your SLO target in the Grafana dashboard.
+        - record: job:portfolio_app_availability:ratio28d
+          expr: |
+            1 - (
+              sum(rate(http_requests_total{job="portfolio-app", status=~"5.."}[28d]))
+              /
+              sum(rate(http_requests_total{job="portfolio-app"}[28d]))
+            )

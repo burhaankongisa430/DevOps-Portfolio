@@ -1,0 +1,29 @@
+title = "devops-portfolio gitleaks config"
+
+[extend]
+# Use the default ruleset as the base and add portfolio-specific allow rules
+useDefault = true
+
+[allowlist]
+  description = "Portfolio-specific false-positive suppression"
+  paths = [
+    # The gitleaks config file itself
+    '''.gitleaks\.toml''',
+    # Terraform backend placeholder values are not real credentials
+    '''backend\.tf''',
+    # Trivyignore and other config files with CVE IDs that look like secrets
+    '''\.trivyignore''',
+  ]
+  regexes = [
+    # Terraform placeholder tokens we use before replacing with real values
+    '''REPLACE_WITH_''',
+    # Example/placeholder patterns in docs and README files
+    '''ACCOUNT_ID\.dkr\.ecr''',
+    '''GITHUB_USERNAME''',
+  ]
+  commits = []
+  stopwords = [
+    "placeholder",
+    "example",
+    "REPLACE",
+  ]

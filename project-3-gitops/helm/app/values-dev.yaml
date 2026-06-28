@@ -1,0 +1,20 @@
+# Dev overrides: shorter canary pauses so you can see the rollout complete
+# without waiting 4+ minutes each demo.
+rollout:
+  canary:
+    steps:
+      - setWeight: 20
+      - pause:
+          duration: 30s   # 30s instead of 2m for faster dev iteration
+      - analysis:
+          templates:
+            - templateName: success-rate
+      - setWeight: 50
+      - pause:
+          duration: 30s
+      - setWeight: 100
+
+analysis:
+  count: 3       # 3 checks instead of 5
+  interval: 15s  # every 15s instead of 30s
+  failureLimit: 1

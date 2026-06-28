@@ -1,0 +1,75 @@
+# Falco values — runtime security monitoring via eBPF syscall tracing.
+
+driver:
+  kind: ebpf    # eBPF is preferred over the kernel module: no kernel version lock-in,
+                # safer for managed Kubernetes (EKS does not allow kernel module loading)
+
+falco:
+  grpc:
+    enabled: true
+  grpcOutput:
+    enabled: true
+
+  # Custom rules appended to the default ruleset.
+  # The default rules catch most common attacks; these rules are workload-specific.
+  rules_files:
+    - /etc/falco/falco_rules.yaml
+    - /etc/falco/falco_rules.local.yaml
+    - /etc/falco/rules.d
+
+  customRules:
+    portfolio-rules.yaml: |-
+      # Custom Falco rules for the portfolio application
+
+      - rule: Shell Spawned in Portfolio Container
+        desc: A shell was spawned inside a portfolio-app container — potential compromise
+        condition: >
+          spawned_process
+          and container
+          and container.image.repository contains "devops-portfolio"
+          and proc.name in (shell_binaries)
+        output: >
+          Shell spawned in portfolio container
+          (user=%user.name container=%container.name image=%container.image.repository
+           cmd=%proc.cmdline pid=%proc.pid)
+        priority: CRITICAL
+        tags: [portfolio, shell, mitre_execution]
+
+      - rule: Unexpected Outbound Connection from Portfolio Container
+        desc: Portfolio container connected to an unexpected external address
+        condition: >
+          outbound
+          and container
+          and container.image.repository contains "devops-portfolio"
+          and not fd.sport in (80, 443, 5432, 8080)
+          and not fd.sip in ("169.254.169.254")
+        output: >
+          Unexpected outbound connection from portfolio container
+          (user=%user.name container=%container.name dst=%fd.rip:%fd.rport
+           proto=%fd.proto cmd=%proc.cmdline)
+        priority: WARNING
+        tags: [portfolio, network, mitre_exfiltration]
+
+      - rule: Write to Sensitive Directory in Portfolio Container
+        desc: A write was attempted to /etc or /proc inside the portfolio container
+        condition: >
+          open_write
+          and container
+          and container.image.repository contains "devops-portfolio"
+          and (fd.name startswith /etc/ or fd.name startswith /proc/)
+          and not fd.name startswith /etc/resolv.conf
+        output: >
+          Write to sensitive directory in portfolio container
+          (user=%user.name file=%fd.name container=%container.name cmd=%proc.cmdline)
+        priority: ERROR
+        tags: [portfolio, filesystem, mitre_persistence]
+
+falcosidekick:
+  enabled: true
+  config:
+    # Route Falco alerts to CloudWatch Logs so they appear alongside GuardDuty
+    # and Security Hub findings in a single pane of glass.
+    aws:
+      cloudwatchlogs:
+        loggroup: "/falco/portfolio-alerts"
+        region: "us-east-1"

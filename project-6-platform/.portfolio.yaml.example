@@ -1,0 +1,36 @@
+# .portfolio.yaml — checked in at the monorepo root.
+# Copy to .portfolio.yaml and fill in the values from your Terraform outputs.
+# Never commit .portfolio.yaml if it contains account IDs or secrets.
+
+platform:
+  project: devops-portfolio
+  environment: dev
+
+aws:
+  region: us-east-1
+  account_id: ""         # auto-detected via STS if blank
+
+ecr:
+  registry: ""           # auto-derived: <account_id>.dkr.ecr.<region>.amazonaws.com
+  image_name: devops-portfolio/dev/app
+
+eks:
+  cluster_name: devops-portfolio-dev-eks
+  namespace: default
+
+terraform:
+  state_bucket: ""       # from: cd project-1-iac/bootstrap && terraform output state_bucket_name
+  p1_state_key: dev/terraform.tfstate
+  p2_state_key: project-2/dev/terraform.tfstate
+
+github:
+  repo: ""               # GITHUB_USERNAME/devops-portfolio
+  branch: main
+  gitops_app_path: project-3-gitops/argocd/apps/portfolio-app.yaml
+
+argocd:
+  namespace: argocd
+  app_name: portfolio-app
+
+prometheus:
+  address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090

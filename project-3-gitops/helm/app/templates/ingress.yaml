@@ -1,0 +1,38 @@
+{{- if .Values.ingress.enabled -}}
+# The ALB Ingress initially routes all traffic to the stable service.
+# During a canary, Argo Rollouts injects the following annotation to split traffic:
+#   alb.ingress.kubernetes.io/actions.<stable-svc>: |
+#     {"type":"forward","forwardConfig":{"targetGroups":[
+#       {"serviceName":"<stable-svc>","servicePort":"80","weight":<stable-weight>},
+#       {"serviceName":"<canary-svc>","servicePort":"80","weight":<canary-weight>}
+#     ]}}
+# The ignoreDifferences entry in the ArgoCD Application prevents ArgoCD from
+# reverting these in-flight weight changes during the rollout.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "app.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  rules:
+    - {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # Must match the stable service name.
+                # The port name "use-annotation" is the Argo Rollouts convention:
+                # it tells the ALB to use the actions annotation for routing
+                # rather than forwarding directly to this service port.
+                name: {{ include "app.fullname" . }}-stable
+                port:
+                  name: use-annotation
+{{- end }}

@@ -1,0 +1,95 @@
+# kube-prometheus-stack values for the dev environment.
+# Full chart defaults: https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml
+
+grafana:
+  # In production, store this in a Kubernetes secret managed by external-secrets or Secrets Manager.
+  # For dev, set via: kubectl create secret generic grafana-admin --from-literal=admin-password=...
+  adminPassword: "changeme-in-prod"
+
+  sidecar:
+    dashboards:
+      enabled: true          # auto-import dashboards from ConfigMaps labelled grafana_dashboard=1
+      label: grafana_dashboard
+      searchNamespace: ALL   # scan all namespaces for dashboard ConfigMaps
+
+  service:
+    type: ClusterIP          # access via port-forward; use LoadBalancer in prod
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+prometheus:
+  prometheusSpec:
+    # Pick up ServiceMonitors and PodMonitors from ALL namespaces, not just the
+    # monitoring namespace. This is required so our app ServiceMonitor in the
+    # default namespace is discovered.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+    retention: 15d
+    retentionSize: "8GB"
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          resources:
+            requests:
+              storage: 10Gi
+
+    resources:
+      requests:
+        cpu: 200m
+        memory: 400Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ["alertname", "namespace"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+      receiver: "null"
+      routes:
+        - match:
+            severity: critical
+          receiver: "null"    # Replace with sns-webhook or pagerduty in prod
+    receivers:
+      - name: "null"
+
+# Node exporter: runs on every node to expose CPU, memory, disk, network metrics.
+nodeExporter:
+  enabled: true
+
+# kube-state-metrics: exposes Kubernetes object state (pod restarts, deployment
+# availability, PVC status, etc.) as Prometheus metrics.
+kubeStateMetrics:
+  enabled: true
+
+# Disable components not needed in dev to reduce resource usage
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false

@@ -1,0 +1,107 @@
+replicaCount: 2
+
+image:
+  repository: ""
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Stable and canary services are both required by Argo Rollouts for traffic splitting.
+service:
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+  host: ""
+
+rollout:
+  revisionHistoryLimit: 3
+  canary:
+    # Steps define the canary progression. Each setWeight is a percentage of traffic
+    # going to the new (canary) version. Steps execute in order; a failed analysis
+    # at any step triggers an automatic abort back to 0% canary.
+    steps:
+      - setWeight: 20
+      - pause:
+          duration: 2m
+      - analysis:
+          templates:
+            - templateName: success-rate
+      - setWeight: 50
+      - pause:
+          duration: 2m
+      - setWeight: 100
+
+analysis:
+  count: 5
+  interval: 30s
+  failureLimit: 1
+  # Set this to the Prometheus address after Project 5 is deployed to upgrade
+  # from HTTP health-check gates to real error-rate and p99-latency gates.
+  # Example: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+  prometheusAddress: ""
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 60
+
+env:
+  PORT: "8080"
+  DB_HOST: ""
+  DB_PORT: "5432"
+
+dbSecretName: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 15
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
